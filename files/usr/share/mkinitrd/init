@@ -1,0 +1,65 @@
+#!/bin/sh
+
+mount -t devtmpfs devtmpfs /dev
+mount -t proc none /proc
+mount -t sysfs none /sys
+mount -t tmpfs tmpfs /tmp
+mount -t tmpfs tmpfs /run
+
+getarg() {
+	for item in $(cat /proc/cmdline); do
+		if [ "$item" = "$1" ]; then
+			return 0
+		elif echo "$item" | grep -q "^$1="; then
+			echo "${item#*=}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+setvar(){
+	if [ -z "$(getarg $1)" ]; then
+		export $1="$2"
+	else
+		export $1=$(getarg $1)
+	fi
+}
+
+rdsystem(){
+	printf "\r\033[K\e[0;31mERROR: \e[0m$1.\n"
+	exec $init
+}
+
+source /etc/initrd.cfg
+
+root=$(getarg root)
+
+for hook in $HOOKS; do
+	if [ -x /hooks/$hook ]; then
+		echo "running hook: $hook"
+		source /hooks/$hook
+		if type run_hook > /dev/null 2>&1; then
+			run_hook
+			unset run_hook
+		fi
+	else
+		echo -e "\e[1;33mWARN: \e[0mhook '$hook' isn't executable"
+	fi
+done
+
+if ! mount $root -o rw /rootfs > /dev/null 2>&1; then
+	rdsystem "Failed to mount '$root' as the real root."
+fi
+
+if [ ! -f "/rootfs$init" ]; then
+	rdsystem "$root was successfully mounted on the real root, but $init does not exist."
+fi
+
+mount -t devtmpfs devtmpfs /rootfs/dev
+mount -t proc none /rootfs/proc
+mount -t sysfs none /rootfs/sys
+mount -t tmpfs tmpfs /rootfs/tmp
+mount -t tmpfs tmpfs /rootfs/run
+
+exec switch_root /rootfs "$init" "$@"

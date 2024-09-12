@@ -1,0 +1,109 @@
+#!/bin/bash
+mods_dir='/lib/modules'
+boot_dir='/boot'
+cfg_dir='/etc'
+data_dir='/usr/share/mkinitrd'
+def_init='/sbin/init'
+
+ERROR(){
+	echo -e "\e[0;31mERROR: \e[1;37m$1,\e[0;31m Aborting...\e[0m"
+	exit $2
+}
+
+INFO(){
+	echo -e "\e[0;32mINFO: \e[0;37m$1\e[0m"
+}
+WARN(){
+	echo -e "\e[1;33mWARN: \e[0;37m$1\e[0m"
+}
+
+if [ ! -d "$mods_dir" ]; then
+	ERROR "Directory $mods_dir not found" 1
+fi
+
+if [ ! -d "$boot_dir" ]; then
+	ERROR "Directory $boot_dir not found" 1
+fi
+
+if [ ! -d "$cfg_dir" ]; then
+	ERROR "Directory $cfg_dir not found" 1
+fi
+
+if [ ! -d "$data_dir" ]; then
+	ERROR "Directory $data_dir not found" 1
+fi
+
+if [ ! -f "$cfg_dir/mkinitrd.cfg" ]; then
+	ERROR "$cfg_dir/mkinitrd.cfg not found" 1
+fi
+
+source "$cfg_dir/mkinitrd.cfg"
+
+WahVer='Alpha-1.0'
+
+wahMain(){
+	if [ ! -d "$mods_dir/$1" ]; then
+		ERROR "Cannot find modules directori for $1" 1
+	fi
+
+	if [ -f "$boot_dir/$RDFile" ]; then
+		WARN "Updating initial ramdisk for kernel version $1"
+		mv $boot_dir/$RDFile $boot_dir/$RDFile.old
+	else
+		INFO "Creating initial ramdisk for kernel version $1"
+	fi
+
+	mkdir /tmp/mkinitrd
+	cd /tmp/mkinitrd
+
+	mkdir -p usr/{bin,lib/modules/$1} etc/init.d proc sys dev tmp run rootfs
+	touch etc/{initrd.cfg,fstab}
+	echo "setvar init '$def_init'" >> etc/initrd.cfg
+
+	ln -s usr/bin bin
+	ln -s usr/bin sbin
+	ln -s usr/lib lib
+
+	cp $mods_dir/$1/modules.{order,alias,builtin{,.modinfo}} usr/lib/modules/$1/
+
+	depmod -b /tmp/mkinitrd/usr $1
+
+	cp $data_dir/init .
+	cp /lib/initcpio/init_functions .
+	cp $data_dir/busybox usr/bin
+	for applet in $(bin/busybox --list); do
+		ln -s busybox bin/$applet
+	done
+
+	find . | cpio --quiet -H newc -o | gzip -9 -n > $boot_dir/$RDFile.new
+
+	if [ $? -eq 0 ]; then
+		INFO "Initial ramdisk successful build"
+		if [ -f "$boot_dir/$RDFile.old" ]; then
+			rm $boot_dir/$RDFile.old
+		fi
+		mv $boot_dir/$RDFile.new $boot_dir/$RDFile
+	else
+		rm $boot_dir/$RDFile.new
+		if [ -f "/tmp/$RDFile.old" ]; then
+			mv $boot_dir/$RDFile.old $boot_dir/$RDFile
+		fi
+		ERROR "Fail to build initial ramdisk" 3
+	fi
+
+	rm -rf /tmp/mkinitrd
+}
+
+if [ $# -eq 0 ]; then
+	WARN "Usage $0 (option) [argument]"
+else
+	case $1 in
+		"-k")
+			if [ $# -ne 2 ]; then
+				ERROR "Usage $0 -k [kernel version]" 2
+			fi
+			RDFile="$InitrdFile.$2.$InitrdExt"
+			wahMain $2
+		;;
+	esac
+fi
