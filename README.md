@@ -5,6 +5,7 @@ mkinitrd -k [kernel version]
 ```
 
 > Error codes:
+
 | Exit code	| Cause					|
 | ---		| ---					|
 | 1		| Mising important file or directory	|
