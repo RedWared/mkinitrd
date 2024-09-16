@@ -1,0 +1,17 @@
+build(){
+	mkdir -p rootfs run tmp dev sys proc usr/bin etc/init.d
+
+	touch etc/fstab
+
+	ln -s usr/bin bin
+	ln -s usr/bin sbin
+
+	echo "setvar init '$def_init'" >> etc/initrd.cfg
+
+	cp $data_dir/init .
+	cp $data_dir/busybox usr/bin
+
+	for applet in $(bin/busybox --list); do
+		ln -s busybox bin/$applet
+	done
+}

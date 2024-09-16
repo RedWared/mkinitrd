@@ -1,9 +1,30 @@
 #!/bin/bash
-mods_dir='/lib/modules'
-boot_dir='/boot'
-cfg_dir='/etc'
-data_dir='/usr/share/mkinitrd'
-def_init='/sbin/init'
+# Copyright: Isaac David Orozco Delgado (c) 2024
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+cmdChk() {
+	if ! type "$1" > /dev/null 2>&1; then
+		echo -e "\e[0;31mERROR: \e[1;37m$1 not found,\e[0;31m Aborting...\e[0m"
+		exit 1
+	fi
+}
+
+NAME='Make initial-ramdisk'
+WahVer='Alpha-1.1'
+
+echo -e "\e[0;33m$NAME\e[0m"
+
+cmdChk dirname
+cmdChk realpath
+
+mods_dir="${WAHROOT}/lib/modules"
+boot_dir="/boot"
+cfg_dir="${WAHROOT}/etc"
+cfg_file='mkinitrd.cfg'
+data_dir="${WAHROOT}/usr/lib/mkinitrd"
+work_dir='/tmp/mkinitrd'
+def_init="/sbin/init"
 
 ERROR(){
 	echo -e "\e[0;31mERROR: \e[1;37m$1,\e[0;31m Aborting...\e[0m"
@@ -17,63 +38,100 @@ WARN(){
 	echo -e "\e[1;33mWARN: \e[0;37m$1\e[0m"
 }
 
-if [ ! -d "$mods_dir" ]; then
-	ERROR "Directory $mods_dir not found" 1
+if [ -d "$cfg_dir" ] && [ -r "$cfg_dir" ] && [ -f "$cfg_dir/$cfg_file" ] && [ -r "$cfg_dir/$cfg_file" ]; then
+	continue
+elif [ -d "${HOME}/.config" ] && [ -r "${HOME}/.config" ] && [ -f "${HOME}/.config/$cfg_file" ] && [ -r "${HOME}/.config/$cfg_file" ]; then
+	cfg_dir="${HOME}/.config"
+elif [ -r "$(dirname $(realpath $0))" ] && [ -f "$(dirname $(realpath $0))/$cfg_file" ] && [ -r "$(dirname $(realpath $0))/$cfg_file" ]; then
+	cfg_dir="$(dirname $(realpath $0))"
+else
+	ERROR "configuration '$cfg_file' not found" 2
 fi
 
-if [ ! -d "$boot_dir" ]; then
-	ERROR "Directory $boot_dir not found" 1
+source "$cfg_dir/$cfg_file"
+
+if [ -d "$data_dir" ] && [ -r "$data_dir" ]; then
+	continue
+elif [ -d "${HOME}/.local/usr/lib/mkinitrd" ] && [ -r "${HOME}/.local/usr/lib/mkinitrd" ]; then
+	data_dir="${HOME}/.local/usr/lib/mkinitrd"
+elif [ -d "$(dirname $(realpath $0))/data" ] && [ -r "$(dirname $(realpath $0))/data" ]; then
+	data_dir="$(dirname $(realpath $0))/data"
+else
+	ERROR "Data directory not found" 2
 fi
 
-if [ ! -d "$cfg_dir" ]; then
-	ERROR "Directory $cfg_dir not found" 1
-fi
+[ ! -d "$data_dir/ins_hooks" ] && ERROR "Installation script directory '$data_dir/ins_hooks' for hooks no found" 2
+[ ! -r "$data_dir/ins_hooks" ] && ERROR "Cannot read installation script directory '$data_dir/ins_hooks' for hooks" 2
 
-if [ ! -d "$data_dir" ]; then
-	ERROR "Directory $data_dir not found" 1
-fi
+[ ! -d "$data_dir/hooks" ] && ERROR "hooks directory '$data_dir/hooks' not found" 2
+[ ! -r "$data_dir/hooks" ] && ERROR "Cannot read '$data_dir/hooks' hooks directory" 2
 
-if [ ! -f "$cfg_dir/mkinitrd.cfg" ]; then
-	ERROR "$cfg_dir/mkinitrd.cfg not found" 1
-fi
+[ ! -d "$mods_dir" ] && ERROR "kernel modules directory not found" 2
+[ ! -r "$mods_dir" ] && ERROR "Cannot read kernel modules directory" 2
 
-source "$cfg_dir/mkinitrd.cfg"
-
-WahVer='Alpha-1.0'
+[ ! -d "$boot_dir" ] && ERROR "Directory $boot_dir not found" 2
+[ ! -r "$boot_dir" ] && ERROR "Cannot read directory $boot_dir" 2
+[ ! -w "$boot_dir" ] && ERROR "Cannot write in directory $boot_dir" 2
 
 wahMain(){
-	if [ ! -d "$mods_dir/$1" ]; then
-		ERROR "Cannot find modules directori for $1" 1
+	if [ ! -d "$mods_dir/$1" ] && [ ! -r "$mods_dir/$1" ]; then
+		ERROR "Cannot find modules directori for $1" 2
 	fi
-
 	if [ -f "$boot_dir/$RDFile" ]; then
 		WARN "Updating initial ramdisk for kernel version $1"
 		mv $boot_dir/$RDFile $boot_dir/$RDFile.old
+		updating=true
 	else
 		INFO "Creating initial ramdisk for kernel version $1"
 	fi
 
-	mkdir /tmp/mkinitrd
-	cd /tmp/mkinitrd
+	mkdir "$work_dir"
+	cd "$work_dir"
 
-	mkdir -p usr/{bin,lib/modules/$1} etc/init.d proc sys dev tmp run rootfs
-	touch etc/{initrd.cfg,fstab}
-	echo "setvar init '$def_init'" >> etc/initrd.cfg
+	mkdir -p usr/lib/modules/$1 hooks
 
-	ln -s usr/bin bin
-	ln -s usr/bin sbin
 	ln -s usr/lib lib
+
+	enable_hooks=()
+
+	add_runscript(){
+		if [ -f "$data_dir/hooks/$hook" ]; then
+			install "$data_dir/hooks/$hook" "$work_dir/hooks/"
+			enable_hooks+=($hook)
+		else
+			WARN "Script for hook '$hook' not found"
+		fi
+	}
+
+	for hook in ${HOOKS[@]}; do
+		INFO "Building hook: $hook"
+		if [ ! -f "$data_dir/ins_hooks/$hook" ]; then
+			cd /
+			rm -rf "$work_dir"
+			[ "$updating" = true ] && mv $boot_dir/$RDFile.old $boot_dir/$RDFile
+			ERROR "hook '$hook' not found" 3
+		fi
+		source "$data_dir/ins_hooks/$hook"
+		if type build > /dev/null 2>&1; then
+			cd "$work_dir"
+			build
+			unset build
+		fi
+	done
+
+	printf "HOOKS='" >> "$work_dir/etc/initrd.cfg"
+	for enhook in ${enable_hooks[@]}; do
+		if [ "${enable_hooks[0]}" = "$enhook" ]; then
+			printf "$enhook"
+		else
+			printf " $enhook"
+		fi
+	done >> "$work_dir/etc/initrd.cfg"
+	echo "'" >> "$work_dir/etc/initrd.cfg"
 
 	cp $mods_dir/$1/modules.{order,alias,builtin{,.modinfo}} usr/lib/modules/$1/
 
-	depmod -b /tmp/mkinitrd/usr $1
-
-	cp $data_dir/init .
-	cp /lib/initcpio/init_functions .
-	cp $data_dir/busybox usr/bin
-	for applet in $(bin/busybox --list); do
-		ln -s busybox bin/$applet
-	done
+	depmod -b "$work_dir/usr" $1
 
 	find . | cpio --quiet -H newc -o | gzip -9 -n > $boot_dir/$RDFile.new
 
@@ -85,13 +143,11 @@ wahMain(){
 		mv $boot_dir/$RDFile.new $boot_dir/$RDFile
 	else
 		rm $boot_dir/$RDFile.new
-		if [ -f "/tmp/$RDFile.old" ]; then
-			mv $boot_dir/$RDFile.old $boot_dir/$RDFile
-		fi
-		ERROR "Fail to build initial ramdisk" 3
+		[ "$updating" = true ] && mv $boot_dir/$RDFile.old $boot_dir/$RDFile
+		ERROR "Fail to build initial ramdisk" 5
 	fi
 
-	rm -rf /tmp/mkinitrd
+	rm -rf "$work_dir"
 }
 
 if [ $# -eq 0 ]; then
@@ -100,7 +156,7 @@ else
 	case $1 in
 		"-k")
 			if [ $# -ne 2 ]; then
-				ERROR "Usage $0 -k [kernel version]" 2
+				ERROR "Usage $0 -k [kernel version]" 4
 			fi
 			RDFile="$InitrdFile.$2.$InitrdExt"
 			wahMain $2

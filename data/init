@@ -26,6 +26,10 @@ setvar(){
 	fi
 }
 
+msg(){
+	! getarg quiet && echo $@
+}
+
 rdsystem(){
 	printf "\r\033[K\e[0;31mERROR: \e[0m$1.\n"
 	exec $init
@@ -37,29 +41,25 @@ root=$(getarg root)
 
 for hook in $HOOKS; do
 	if [ -x /hooks/$hook ]; then
-		echo "running hook: $hook"
 		source /hooks/$hook
 		if type run_hook > /dev/null 2>&1; then
+			msg "running hook: $hook"
 			run_hook
-			unset run_hook
+			unset -f run_hook
 		fi
 	else
-		echo -e "\e[1;33mWARN: \e[0mhook '$hook' isn't executable"
+		msg -e "\e[1;33mWARN: \e[0mhook '$hook' isn't executable"
 	fi
 done
 
-if ! mount $root -o rw /rootfs > /dev/null 2>&1; then
-	rdsystem "Failed to mount '$root' as the real root."
-fi
+! mount $root -o rw /rootfs > /dev/null 2>&1 && rdsystem "Failed to mount '$root' as the real root."
 
-if [ ! -f "/rootfs$init" ]; then
-	rdsystem "$root was successfully mounted on the real root, but $init does not exist."
-fi
+[ ! -f "/rootfs$init" ] && rdsystem "$root was successfully mounted on the real root, but $init does not exist."
 
-mount -t devtmpfs devtmpfs /rootfs/dev
-mount -t proc none /rootfs/proc
-mount -t sysfs none /rootfs/sys
-mount -t tmpfs tmpfs /rootfs/tmp
-mount -t tmpfs tmpfs /rootfs/run
+! mount -t devtmpfs devtmpfs /rootfs/dev && rdsystem "Failed to mount /dev."
+! mount -t proc none /rootfs/proc && rdsystem "Failed to mount /proc."
+! mount -t sysfs none /rootfs/sys && rdsystem "Failed to mount /sys."
+! mount -t tmpfs tmpfs /rootfs/tmp && rdsystem "Failed to mount /tmp."
+! mount -t tmpfs tmpfs /rootfs/run && rdsystem "Failed to mount /run."
 
 exec switch_root /rootfs "$init" "$@"
