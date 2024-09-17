@@ -11,7 +11,7 @@ cmdChk() {
 }
 
 NAME='Make initial-ramdisk'
-WahVer='Alpha-1.1'
+WahVer='Alpha-1.2'
 
 echo -e "\e[0;33m$NAME\e[0m"
 

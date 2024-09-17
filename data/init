@@ -38,6 +38,7 @@ rdsystem(){
 source /etc/initrd.cfg
 
 root=$(getarg root)
+system=$(getarg system)
 
 for hook in $HOOKS; do
 	if [ -x /hooks/$hook ]; then
@@ -53,6 +54,10 @@ for hook in $HOOKS; do
 done
 
 ! mount $root -o rw /rootfs > /dev/null 2>&1 && rdsystem "Failed to mount '$root' as the real root."
+
+if [ ! -z "$system" ]; then
+	! mount $system -o rw /rootfs/System > /dev/null 2>&1 && rdsystem "Failed to mount '$system' as /System."
+fi
 
 [ ! -f "/rootfs$init" ] && rdsystem "$root was successfully mounted on the real root, but $init does not exist."
 
